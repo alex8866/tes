@@ -1,0 +1,84 @@
+#!/bin/bash
+
+: << EOF
+该脚本用来快速建立测试环境，该脚本专门为LINUX系G统下
+予isoa下的服务开发,该脚本配合logview脚本效果不错
+注意：该文件截取的数据为该服务的最后次错误请求数据
+使用此命令至少要等$DELAY s 之后
+由于ISOA日志文件的问题有些过长的数据截取可能会失败
+孔令飞@2012-05-07
+EOF
+#set -x
+confpath=$HOME/etc
+
+srcpath=$(awk -F= '/srcpath/{print $2}' $confpath/logview.conf)
+jsonfile=$(awk -F= '/jsonfile/{print $2}' $confpath/logview.conf)
+errorfile=$(awk -F= '/errorfile/{print $2}' $confpath/logview.conf)
+maxrecord=$(awk -F= '/maxrecord/{print $2}' $confpath/logview.conf)
+
+#截取字符串
+domain=$(echo $1 | awk -F. '{print $1}')
+sevname=$(echo $1 | awk -F. '{print $2}')
+filename=$1
+
+
+cat $srcpath/$domain/$filename > $PWD/$filename
+echo "
+
+int main()
+{
+	char** result;
+	char* request;
+	size_t* result_size;
+	size_t request_size;
+	result=(char**)malloc(10);
+	request=(char*)malloc(70000);
+	memset(request,0,70000);
+	result_size=(size_t*)malloc(10);
+	request_size=30;
+	char file_name[200] = {0};
+	memset(file_name, 0x00, sizeof(file_name));
+	sprintf(file_name, \"%s/$jsonfile\", getenv(\"PWD\"));
+	int fd = open(file_name, O_RDWR|O_CREAT,O_APPEND|S_IRWXU);
+	read(fd,request,70000);
+	printf(\"%s\\n\",request);
+	close(fd);" >> $filename
+echo "
+	$domain"_"$sevname(result, result_size, request, request_size);" >> $filename
+echo "
+	printf(\"%s\n\", *result);
+	free(*result);
+	free(result);
+	free(request);
+	free(result_size);
+
+	return 0;
+}" >> $filename
+
+#生成一个软链接 方便vi
+ln -f -s $PWD/$filename LINK
+
+#生成Makefile
+echo "
+BINARYFILE=$sevname" > $PWD/makefile
+echo "DOMAIN=$domain" >> $PWD/makefile
+echo "FILENAME=$domain.$sevname" >> $PWD/makefile
+
+cat $confpath/mk.conf >> $PWD/makefile
+
+#截取前台传入的数据到当前目录下 默认文件为data.txt
+tmp="'/$domain.$sevname/{print \$0}'"
+str=$(tail -$maxrecord $errorfile | eval awk $tmp |awk  'END{print $0}')
+
+#处理字符串获取所需数据
+str1=${str%\}*}
+str2=${str1#*\{}
+data="{$str2}"
+
+if [ ${#data} -lt 3 ];then
+	cat /dev/null > $PWD/data.txt
+else
+	echo $data > $PWD/data.txt
+fi
+
+exit 0
